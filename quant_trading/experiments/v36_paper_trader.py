@@ -293,13 +293,21 @@ class V36PaperTrader:
         self.loss_count = 0
         self.total_pnl = 0.0
 
+        # ========== 风控参数 ==========
+        self.max_pos = 3                    # 最大同时持仓数
+        self.max_pos_pct = 0.25             # 单仓最大占比 (25%)
+        self.max_total_pct = 0.60            # 总仓位上限 (60%)
+        self.min_signal_strength = 0.50      # 最小信号强度
+        self.min_trade_interval = 300        # 最小交易间隔(秒)
+        self.last_trade_time: Dict[str, float] = {}  # 上次交易时间
+
         # 模拟数据生成器
         self._mock_prices = {s: 50000.0 for s in self.symbols}
 
         logger.info(f"V36PaperTrader 初始化:")
         logger.info(f"  交易对: {self.symbols}")
         logger.info(f"  初始资金: {capital}")
-        logger.info(f"  参数: {self.params}")
+        logger.info(f"  风控: max_pos={self.max_pos}, max_pos_pct={self.max_pos_pct}, min_strength={self.min_signal_strength}")
         logger.info(f"  模式: {'模拟数据' if self.mock_mode else '真实REST'}")
 
     async def on_kline(self, kline_data: Dict) -> None:
@@ -334,13 +342,37 @@ class V36PaperTrader:
             logger.error(f"K线处理错误: {e}")
 
     async def _check_entry(self, bar: Bar) -> None:
-        """检查买入信号"""
+        """检查买入信号 (含风控检查)"""
         result = self.signal_gen.check_buy_signals(bar.symbol)
         if not result.get("signal"):
             return
 
         buy_point = result.get("buy_point", "A-企稳")
         strength = result.get("strength", 0.5)
+
+        # ========== 风控检查 ==========
+
+        # 1. 信号强度检查
+        if strength < self.min_signal_strength:
+            logger.info(f"[{bar.symbol}] 信号强度不足: {strength:.2f} < {self.min_signal_strength}")
+            return
+
+        # 2. 最大持仓数检查
+        if len(self.positions) >= self.max_pos:
+            logger.info(f"[{bar.symbol}] 达到最大持仓数 {self.max_pos}，跳过")
+            return
+
+        # 3. 交易间隔检查
+        last_time = self.last_trade_time.get(bar.symbol, 0)
+        if time.time() - last_time < self.min_trade_interval:
+            logger.info(f"[{bar.symbol}] 交易间隔不足，跳过")
+            return
+
+        # 4. 总仓位检查
+        total_exposed = self._get_total_exposed()
+        if total_exposed >= self.max_total_pct:
+            logger.info(f"[{bar.symbol}] 总仓位已满 {total_exposed:.1%}，跳过")
+            return
 
         logger.info(f"[{bar.symbol}] 买入信号: {buy_point}, 强度: {strength:.2f}, 价格: {bar.close:.4f}")
 
@@ -367,6 +399,9 @@ class V36PaperTrader:
         )
 
         if order.status.value == "filled":
+            # 记录交易时间
+            self.last_trade_time[bar.symbol] = time.time()
+
             # 记录持仓
             self.positions[bar.symbol] = Position(
                 symbol=bar.symbol,
@@ -378,13 +413,10 @@ class V36PaperTrader:
                 time_stop=time_stop,
             )
 
+            # 更新余额
             cost = order.filled_quantity * order.avg_fill_price
             self.balance -= cost
-
-            logger.info(
-                f"[{bar.symbol}] 开仓: {order.filled_quantity:.4f} @ {order.avg_fill_price:.4f}, "
-                f"成本: {cost:.2f}, 余额: {self.balance:.2f}"
-            )
+            logger.info(f"[{bar.symbol}] 开仓: {order.filled_quantity:.4f} @ {order.avg_fill_price:.4f}, 成本: {cost:.2f}, 余额: {self.balance:.2f}")
 
     async def _check_exit(self, bar: Bar) -> None:
         """检查平仓信号"""
@@ -428,11 +460,23 @@ class V36PaperTrader:
 
             del self.positions[bar.symbol]
 
+    def _get_total_exposed(self) -> float:
+        """计算当前已用仓位比例"""
+        total_value = sum(
+            pos.quantity * pos.entry_price
+            for pos in self.positions.values()
+        )
+        return total_value / self.initial_capital
+
     def _calculate_position_size(self, price: float) -> float:
-        """计算仓位大小"""
-        # 每笔交易使用10%仓位
-        position_value = self.balance * 0.1
-        return position_value / price
+        """计算仓位大小 (基于风控参数)"""
+        # 可用资金
+        available = self.balance * self.max_pos_pct
+        # 不超过剩余可仓位的1/3
+        remaining_slots = max(1, self.max_pos - len(self.positions))
+        max_per_trade = self.balance * (self.max_total_pct / remaining_slots)
+        position_value = min(available, max_per_trade)
+        return max(0, position_value / price)
 
     async def _ws_listener(self) -> None:
         """WebSocket监听任务"""
