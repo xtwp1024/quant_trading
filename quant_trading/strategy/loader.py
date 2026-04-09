@@ -21,7 +21,11 @@ BUILTIN_STRATEGIES: Dict[str, str] = {
     "hmm_regime": "quant_trading.strategy.advanced.hmm_regime_strategy.HMMRegimeStrategy",
     "arbitrage": "quant_trading.strategy.advanced.arb_strategy.ArbitrageStrategy",
     "copula_pairs": "quant_trading.strategy.advanced.copula_pairs_strategy.CopulaPairsStrategyAdapter",
-    "swing": "quant_trading.strategy.swing_strategy.SWINGStrategy",
+    # Migrated from strategies/ → strategy/advanced/ (Plan A unification)
+    "v36": "quant_trading.strategy.advanced.v36_strategy.V36Strategy",
+    "swing": "quant_trading.strategy.advanced.swing_strategy.SWINGStrategy",
+    "grid_hodl": "quant_trading.strategy.advanced.grid_hodl.GridHODLStrategy",
+    "cdca": "quant_trading.strategy.advanced.cdca_strategy.CDCAStrategy",
     "triangular_arb": "quant_trading.strategy.triangular_arb.TriangularArbitrageStrategy",
     "chan_theory": "quant_trading.strategy.advanced.chan_theory_strategy.ChanTheoryStrategy",
     "elliott_wave": "quant_trading.strategy.advanced.elliott_wave_strategy.ElliottWaveStrategy",
