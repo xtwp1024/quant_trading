@@ -244,7 +244,7 @@ class V36PaperTrader:
     V36 Paper Trading Runner
 
     流程:
-    1. 连接Binance WebSocket获取实时K线
+    1. REST API轮询获取K线数据 (或模拟数据模式)
     2. V36SignalGenerator生成信号
     3. Executor(test_mode=True)模拟下单
     4. 实时风控: 止损/止盈/时间止损
@@ -257,13 +257,27 @@ class V36PaperTrader:
         params: Dict = None,
         api_key: str = "",
         api_secret: str = "",
+        poll_interval: int = 60,
+        mock_mode: bool = False,  # 模拟数据模式
     ):
         self.symbols = [s.upper() for s in symbols]
         self.capital = capital
         self.params = params or V36_CRYPTO_OPTIMIZED.copy()
+        self.poll_interval = poll_interval
+        self.mock_mode = mock_mode
 
         # 初始化组件
-        self.ws_client = BinanceWebSocketClient()
+        self.rest_client = None
+        if not mock_mode:
+            try:
+                self.rest_client = BinanceRESTClient(api_key, api_secret) if api_key else BinanceRESTClient()
+                # 测试连接
+                self.rest_client.get_klines('BTCUSDT', '1m', limit=1)
+                logger.info("Binance REST API 连接成功")
+            except Exception as e:
+                logger.warning(f"Binance API 连接失败: {e}，切换到模拟模式")
+                self.mock_mode = True
+
         self.executor = Executor(api_key=api_key, api_secret=api_secret, test_mode=True)
         self.signal_gen = V36SignalGenerator(self.params)
 
@@ -278,10 +292,14 @@ class V36PaperTrader:
         self.loss_count = 0
         self.total_pnl = 0.0
 
+        # 模拟数据生成器
+        self._mock_prices = {s: 50000.0 for s in self.symbols}
+
         logger.info(f"V36PaperTrader 初始化:")
         logger.info(f"  交易对: {self.symbols}")
         logger.info(f"  初始资金: {capital}")
         logger.info(f"  参数: {self.params}")
+        logger.info(f"  模式: {'模拟数据' if self.mock_mode else '真实REST'}")
 
     async def on_kline(self, kline_data: Dict) -> None:
         """处理K线数据"""
@@ -453,23 +471,87 @@ class V36PaperTrader:
         logger.info(f"当前余额: {self.balance:.2f}")
         logger.info(f"持仓数: {len(self.positions)}")
 
+    def _generate_mock_kline(self, symbol: str) -> Bar:
+        """生成模拟K线"""
+        import random
+        price = self._mock_prices[symbol]
+        # 随机游走
+        change = random.uniform(-0.005, 0.008)  # -0.5% ~ +0.8%
+        price *= (1 + change)
+        self._mock_prices[symbol] = price
+
+        open_p = price * random.uniform(0.998, 1.002)
+        high_p = price * random.uniform(1.001, 1.01)
+        low_p = price * random.uniform(0.99, 0.999)
+        vol = random.uniform(100, 500)
+
+        return Bar(
+            symbol=symbol,
+            timestamp=datetime.now(),
+            open=open_p,
+            high=high_p,
+            low=low_p,
+            close=price,
+            volume=vol,
+        )
+
     async def run(self) -> None:
         """运行Paper Trader"""
-        logger.info("V36 Paper Trader 启动")
+        mode = "模拟数据" if self.mock_mode else "REST轮询"
+        logger.info(f"V36 Paper Trader 启动 ({mode}模式)")
         logger.info("-" * 50)
 
-        try:
-            # 启动WebSocket
-            asyncio.create_task(self._ws_listener())
+        # 预热: 生成足够的历史数据
+        if self.mock_mode:
+            logger.info("预热: 生成历史K线数据...")
+            for _ in range(60):  # 60根1分钟K线
+                for symbol in self.symbols:
+                    bar = self._generate_mock_kline(symbol)
+                    self.signal_gen.update_bar(bar)
 
-            # 主循环 - 每分钟打印状态
+        try:
+            iteration = 0
             while True:
-                await asyncio.sleep(60)
-                self.print_stats()
+                for symbol in self.symbols:
+                    try:
+                        # 获取K线
+                        if self.mock_mode:
+                            bar = self._generate_mock_kline(symbol)
+                            self.signal_gen.update_bar(bar)
+                        else:
+                            klines = self.rest_client.get_klines(symbol, '1m', limit=3)
+                            for k in klines:
+                                ts = datetime.fromtimestamp(k[0] / 1000)
+                                bar = Bar(
+                                    symbol=symbol,
+                                    timestamp=ts,
+                                    open=float(k[1]),
+                                    high=float(k[2]),
+                                    low=float(k[3]),
+                                    close=float(k[4]),
+                                    volume=float(k[5]),
+                                )
+                                self.signal_gen.update_bar(bar)
+
+                        # 检查平仓
+                        if symbol in self.positions:
+                            await self._check_exit(self.signal_gen.bars[symbol][-1])
+
+                        # 检查开仓
+                        if symbol not in self.positions:
+                            await self._check_entry(self.signal_gen.bars[symbol][-1])
+
+                    except Exception as e:
+                        logger.error(f"[{symbol}] 处理错误: {e}")
+
+                iteration += 1
+                if iteration % 5 == 0:  # 每5次迭代打印状态
+                    self.print_stats()
+
+                await asyncio.sleep(self.poll_interval)
 
         except KeyboardInterrupt:
             logger.info("接收到中断信号，停止运行...")
-            self.ws_client.close()
             self.print_stats()
 
 
