@@ -270,10 +270,11 @@ class V36PaperTrader:
         self.rest_client = None
         if not mock_mode:
             try:
-                self.rest_client = BinanceRESTClient(api_key, api_secret) if api_key else BinanceRESTClient()
+                base_url = 'https://www.binance.bh'  # 使用可用端点
+                self.rest_client = BinanceRESTClient(api_key, api_secret, base_url=base_url)
                 # 测试连接
                 self.rest_client.get_klines('BTCUSDT', '1m', limit=1)
-                logger.info("Binance REST API 连接成功")
+                logger.info(f"Binance REST API 连接成功 ({base_url})")
             except Exception as e:
                 logger.warning(f"Binance API 连接失败: {e}，切换到模拟模式")
                 self.mock_mode = True
