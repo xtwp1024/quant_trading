@@ -25,7 +25,7 @@ from datetime import datetime
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from quant_trading.strategies.v36_strategy import (
+from quant_trading.strategy.advanced.v36_strategy import (
     V36Params,
     V36StockPool,
     DEFAULT_STOCK_POOL,

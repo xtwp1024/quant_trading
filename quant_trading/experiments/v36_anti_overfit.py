@@ -32,7 +32,7 @@ from quant_trading.backtester.anti_overfit import (
     DSRResult,
     SPAResult,
 )
-from quant_trading.strategies.v36_strategy import (
+from quant_trading.strategy.advanced.v36_strategy import (
     V36Params,
     DEFAULT_STOCK_POOL,
     calculate_advanced_factors,

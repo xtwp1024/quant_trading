@@ -13,7 +13,7 @@ from quant_trading.optimization.kelly_calculator import KellyCalculator
 from quant_trading.backtest import BacktestEngine
 from quant_trading.exchanges import BinanceAdapter, OKXAdapter
 from quant_trading.signal.stock_pool import StockPoolManager, PoolType, AStockDataProvider
-from quant_trading.strategies.v36_strategy import V36Backtester, V36Params, DEFAULT_STOCK_POOL
+from quant_trading.strategy.advanced.v36_strategy import V36Backtester, V36Params, DEFAULT_STOCK_POOL
 
 
 def cmd_info(args):

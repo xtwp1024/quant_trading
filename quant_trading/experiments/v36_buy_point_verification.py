@@ -35,7 +35,7 @@ from quant_trading.backtester.suite_engine import (
     StopConfig,
     run_simple_backtest,
 )
-from quant_trading.strategies.v36_strategy import (
+from quant_trading.strategy.advanced.v36_strategy import (
     V36Params,
     V36StockPool,
     DEFAULT_STOCK_POOL,
