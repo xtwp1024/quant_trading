@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-02-11T08:16:48.044114",
+  "martin_best_params": {
+    "grid_spacing": 0.01,
+    "grid_levels": 10.0,
+    "take_profit": 0.015,
+    "stop_loss": 0.08
+  },
+  "trend_params": {
+    "ema_fast": 12,
+    "ema_slow": 26,
+    "rsi_period": 14,
+    "rsi_overbought": 70,
+    "rsi_oversold": 30
+  },
+  "sl_tp_params": {
+    "stop_loss": 0.05,
+    "take_profit": 0.015
+  },
+  "robustness": {
+    "robustness_score": 0.85,
+    "status": "PASS"
+  }
+}

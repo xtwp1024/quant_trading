@@ -1,0 +1,286 @@
+{
+  "timestamp": "2026-02-11T08:16:14.139140",
+  "total_strategies": 20,
+  "qualified_strategies": 9,
+  "selected_strategies": [
+    "MartinBinance",
+    "MACDCross",
+    "WilliamsR",
+    "RSIDivergence",
+    "ParabolicSAR"
+  ],
+  "all_results": [
+    {
+      "Strategy": "WeightedGrid",
+      "ROI": 6.236203565420874,
+      "Sharpe": 2.4014286128198323,
+      "MaxDrawdown": 24.6398788362281,
+      "WinRate": 59.96646210492592,
+      "Trades": 122,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "NostalgiaV2",
+      "ROI": 3.374982585607734,
+      "Sharpe": 0.37995484847240524,
+      "MaxDrawdown": 21.48122229914668,
+      "WinRate": 50.67642388961457,
+      "Trades": 123,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "Momentum",
+      "ROI": 23.943991778782504,
+      "Sharpe": 0.3555781345986666,
+      "MaxDrawdown": 39.247746304049855,
+      "WinRate": 60.81106602001054,
+      "Trades": 57,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "ATRBreakout",
+      "ROI": -9.97663702476957,
+      "Sharpe": 1.9859808067241915,
+      "MaxDrawdown": 25.437037740692915,
+      "WinRate": 57.9029821726953,
+      "Trades": 108,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "TripleSupertrend",
+      "ROI": -1.2631257940587428,
+      "Sharpe": 1.3013352105002831,
+      "MaxDrawdown": 13.487346516301045,
+      "WinRate": 49.59576086191567,
+      "Trades": 34,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "SqueezeMomentum",
+      "ROI": 10.083849131936976,
+      "Sharpe": 2.419975095761137,
+      "MaxDrawdown": 19.991844553958995,
+      "WinRate": 52.855860960340294,
+      "Trades": 83,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "BinanceAccessory",
+      "ROI": 4.002886797439398,
+      "Sharpe": 1.747892732125377,
+      "MaxDrawdown": 27.007688464694493,
+      "WinRate": 53.71298055120812,
+      "Trades": 37,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "MartinBinance",
+      "ROI": 23.466566117599996,
+      "Sharpe": 2.4312640661491187,
+      "MaxDrawdown": 26.16794696232922,
+      "WinRate": 52.61534422933427,
+      "Trades": 72,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "MeanReversion",
+      "ROI": -3.07318523133553,
+      "Sharpe": 0.6338458388468211,
+      "MaxDrawdown": 27.081587970636456,
+      "WinRate": 57.859913102348145,
+      "Trades": 27,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "GridTrading",
+      "ROI": -3.968344366543448,
+      "Sharpe": 2.318640804157564,
+      "MaxDrawdown": 15.175599632000338,
+      "WinRate": 61.56305710884955,
+      "Trades": 21,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "ETHRotation",
+      "ROI": 2.7546762347373406,
+      "Sharpe": 0.5742949931627399,
+      "MaxDrawdown": 24.192508195499787,
+      "WinRate": 42.81414560384452,
+      "Trades": 63,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "MACDCross",
+      "ROI": 18.184968246925674,
+      "Sharpe": 1.810689230769768,
+      "MaxDrawdown": 24.94749947027713,
+      "WinRate": 65.96873011060103,
+      "Trades": 59,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "RSIDivergence",
+      "ROI": 15.33601546034454,
+      "Sharpe": 1.5451761982472856,
+      "MaxDrawdown": 23.492303309726992,
+      "WinRate": 57.25553030726005,
+      "Trades": 143,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "VWAP",
+      "ROI": -1.720024539323699,
+      "Sharpe": 0.7332923102673483,
+      "MaxDrawdown": 14.131673476575063,
+      "WinRate": 42.406546575271044,
+      "Trades": 28,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "Ichimoku",
+      "ROI": 13.167343078899723,
+      "Sharpe": 0.5576882267615104,
+      "MaxDrawdown": 10.13805292809006,
+      "WinRate": 63.20199713982569,
+      "Trades": 100,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "ParabolicSAR",
+      "ROI": 11.340258582459498,
+      "Sharpe": 1.6223159729561702,
+      "MaxDrawdown": 25.148999369525285,
+      "WinRate": 66.08382284134707,
+      "Trades": 60,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "WilliamsR",
+      "ROI": 17.448790266313424,
+      "Sharpe": 1.7300694400216388,
+      "MaxDrawdown": 21.236266853455085,
+      "WinRate": 44.4806630287507,
+      "Trades": 81,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "KDJ",
+      "ROI": -0.2445003391975895,
+      "Sharpe": 1.5132911210085154,
+      "MaxDrawdown": 25.93893678388033,
+      "WinRate": 65.06753130698449,
+      "Trades": 120,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "DualThrust",
+      "ROI": 19.151362861673114,
+      "Sharpe": 1.728044883678951,
+      "MaxDrawdown": 28.04323802912183,
+      "WinRate": 48.13560791347285,
+      "Trades": 122,
+      "Status": "OK"
+    },
+    {
+      "Strategy": "RBreaker",
+      "ROI": -8.78699231384706,
+      "Sharpe": 1.4791932014344173,
+      "MaxDrawdown": 12.772270520295784,
+      "WinRate": 53.42274904851002,
+      "Trades": 82,
+      "Status": "OK"
+    }
+  ],
+  "filtered_results": [
+    {
+      "Strategy": "MartinBinance",
+      "ROI": 23.466566117599996,
+      "Sharpe": 2.4312640661491187,
+      "MaxDrawdown": 26.16794696232922,
+      "WinRate": 52.61534422933427,
+      "Trades": 72,
+      "Status": "OK",
+      "Rank": 1
+    },
+    {
+      "Strategy": "DualThrust",
+      "ROI": 19.151362861673114,
+      "Sharpe": 1.728044883678951,
+      "MaxDrawdown": 28.04323802912183,
+      "WinRate": 48.13560791347285,
+      "Trades": 122,
+      "Status": "OK",
+      "Rank": 2
+    },
+    {
+      "Strategy": "MACDCross",
+      "ROI": 18.184968246925674,
+      "Sharpe": 1.810689230769768,
+      "MaxDrawdown": 24.94749947027713,
+      "WinRate": 65.96873011060103,
+      "Trades": 59,
+      "Status": "OK",
+      "Rank": 3
+    },
+    {
+      "Strategy": "WilliamsR",
+      "ROI": 17.448790266313424,
+      "Sharpe": 1.7300694400216388,
+      "MaxDrawdown": 21.236266853455085,
+      "WinRate": 44.4806630287507,
+      "Trades": 81,
+      "Status": "OK",
+      "Rank": 4
+    },
+    {
+      "Strategy": "RSIDivergence",
+      "ROI": 15.33601546034454,
+      "Sharpe": 1.5451761982472856,
+      "MaxDrawdown": 23.492303309726992,
+      "WinRate": 57.25553030726005,
+      "Trades": 143,
+      "Status": "OK",
+      "Rank": 5
+    },
+    {
+      "Strategy": "ParabolicSAR",
+      "ROI": 11.340258582459498,
+      "Sharpe": 1.6223159729561702,
+      "MaxDrawdown": 25.148999369525285,
+      "WinRate": 66.08382284134707,
+      "Trades": 60,
+      "Status": "OK",
+      "Rank": 6
+    },
+    {
+      "Strategy": "SqueezeMomentum",
+      "ROI": 10.083849131936976,
+      "Sharpe": 2.419975095761137,
+      "MaxDrawdown": 19.991844553958995,
+      "WinRate": 52.855860960340294,
+      "Trades": 83,
+      "Status": "OK",
+      "Rank": 7
+    },
+    {
+      "Strategy": "WeightedGrid",
+      "ROI": 6.236203565420874,
+      "Sharpe": 2.4014286128198323,
+      "MaxDrawdown": 24.6398788362281,
+      "WinRate": 59.96646210492592,
+      "Trades": 122,
+      "Status": "OK",
+      "Rank": 8
+    },
+    {
+      "Strategy": "BinanceAccessory",
+      "ROI": 4.002886797439398,
+      "Sharpe": 1.747892732125377,
+      "MaxDrawdown": 27.007688464694493,
+      "WinRate": 53.71298055120812,
+      "Trades": 37,
+      "Status": "OK",
+      "Rank": 9
+    }
+  ]
+}

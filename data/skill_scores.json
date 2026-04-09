@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "buckets": {
+    "test-skill|general|general|default": {
+      "score": 0.2,
+      "lastUsedAt": "2026-03-29T17:29:30.266173Z",
+      "successCount": 1
+    }
+  }
+}

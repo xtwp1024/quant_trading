@@ -1,0 +1,123 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-god"
+version = "1.0.0"
+description = "Unified Quant Trading System - God of Quant Trading"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Quant God Team"}
+]
+keywords = [
+    "quant",
+    "trading",
+    "algorithmic-trading",
+    "crypto",
+    "options",
+    "hawkes-process",
+    "black-scholes"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    # Core
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scipy>=1.10.0",
+
+    # Async/HTTP
+    "httpx>=0.25.0",
+    "aiofiles>=23.0.0",
+
+    # Database
+    "sqlalchemy>=2.0.0",
+    "aiosqlite>=0.19.0",
+    "asyncpg>=0.28.0",
+    "redis>=5.0.0",
+
+    # ML/AI
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.4.0",
+
+    # Crypto exchanges
+    "ccxt>=4.0.0",
+
+    # Logging
+    "loguru>=0.7.0",
+    "rich>=13.0.0",
+
+    # CLI
+    "click>=8.1.0",
+    "typer>=0.9.0",
+
+    # Additional
+    "pyyaml>=6.0",
+
+    # Market data (A-share)
+    "akshare>=1.12.0",
+    "requests>=2.31.0",
+
+    # Technical analysis
+    "talib>=0.4.0",
+
+    # Data validation
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.5.0",
+    "ruff>=0.0.290",
+]
+
+[project.scripts]
+quant-god = "quant_trading.cli:main"
+
+[tool.setuptools]
+packages = ["quant_trading", "quant_trading.core", "quant_trading.data", "quant_trading.five_force", "quant_trading.gene_lab"]
+
+[tool.setuptools.package-data]
+quant_trading = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"

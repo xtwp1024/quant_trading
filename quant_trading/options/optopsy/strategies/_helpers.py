@@ -1,0 +1,787 @@
+"""Internal helpers for options strategy processing.
+
+Contains the ``Side`` enum and private helper functions that assemble leg
+definitions and call the core strategy engine.  These are not part of the
+public API.
+
+Parameter defaults and validation are handled by the Pydantic models in
+``types.py`` (``StrategyParams``, ``CalendarStrategyParams``).  Helpers
+pass raw user ``kwargs`` through to ``_process_strategy()`` /
+``_process_calendar_strategy()``, which validate and apply defaults.
+"""
+
+from enum import Enum
+from typing import List, Optional, Tuple, Unpack
+
+import numpy as np
+import pandas as pd
+
+from ..checks import _run_checks
+from ..core import _process_calendar_strategy, _process_strategy
+from ..definitions import (
+    calendar_spread_external_cols,
+    calendar_spread_internal_cols,
+    describe_cols,
+    diagonal_spread_external_cols,
+    diagonal_spread_internal_cols,
+    double_strike_internal_cols,
+    quadruple_strike_internal_cols,
+    single_strike_internal_cols,
+    straddle_internal_cols,
+    triple_strike_internal_cols,
+)
+from ..evaluation import _evaluate_all_options
+from ..output import _format_output
+from ..pricing import _calculate_commission, _calculate_fill_price
+from ..rules import (
+    _rule_butterfly_strikes,
+    _rule_expiration_ordering,
+    _rule_iron_butterfly_strikes,
+    _rule_iron_condor_strikes,
+    _rule_non_overlapping_strike,
+)
+from ..timestamps import normalize_dates
+from ..types import CalendarStrategyParamsDict, StrategyParamsDict
+
+
+class Side(Enum):
+    """Enum representing long or short position side with multiplier values."""
+
+    long = 1
+    short = -1
+
+
+# ---------------------------------------------------------------------------
+# Default delta TargetRange dicts for each role
+# ---------------------------------------------------------------------------
+_DEFAULT_DELTA = {"target": 0.30, "min": 0.20, "max": 0.40}
+_DEFAULT_ATM_DELTA = {"target": 0.50, "min": 0.40, "max": 0.60}
+_DEFAULT_OTM_DELTA = {"target": 0.10, "min": 0.05, "max": 0.20}
+_DEFAULT_WING_DELTA = {"target": 0.20, "min": 0.10, "max": 0.30}
+_DEFAULT_DEEP_ITM_DELTA = {"target": 0.80, "min": 0.60, "max": 0.95}
+_DEFAULT_ITM_WING_DELTA = {"target": 0.40, "min": 0.30, "max": 0.50}
+
+
+def _singles(
+    data: pd.DataFrame, leg_def: List[Tuple], **kwargs: Unpack[StrategyParamsDict]
+) -> pd.DataFrame:
+    """Process single-leg option strategies (calls or puts)."""
+    kwargs.setdefault("leg1_delta", _DEFAULT_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=single_strike_internal_cols,
+        leg_def=leg_def,
+        params=kwargs,
+    )
+
+
+def _straddles(
+    data: pd.DataFrame, leg_def: List[Tuple], **kwargs: Unpack[StrategyParamsDict]
+) -> pd.DataFrame:
+    """Process straddle strategies (call and put at same strike)."""
+    kwargs.setdefault("leg1_delta", _DEFAULT_ATM_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_ATM_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=straddle_internal_cols,
+        leg_def=leg_def,
+        join_on=[
+            "underlying_symbol",
+            "expiration",
+            "strike",
+            "dte_entry",
+            "dte_range",
+        ],
+        params=kwargs,
+    )
+
+
+def _strangles(
+    data: pd.DataFrame, leg_def: List[Tuple], **kwargs: Unpack[StrategyParamsDict]
+) -> pd.DataFrame:
+    """Process strangle strategies (call and put at different strikes)."""
+    kwargs.setdefault("leg1_delta", _DEFAULT_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=double_strike_internal_cols,
+        leg_def=leg_def,
+        rules=_rule_non_overlapping_strike,
+        join_on=["underlying_symbol", "expiration", "dte_entry", "dte_range"],
+        params=kwargs,
+    )
+
+
+def _spread(
+    data: pd.DataFrame, leg_def: List[Tuple], **kwargs: Unpack[StrategyParamsDict]
+) -> pd.DataFrame:
+    """Process vertical spread strategies (call or put spreads at different strikes)."""
+    kwargs.setdefault("leg1_delta", _DEFAULT_ATM_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_OTM_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=double_strike_internal_cols,
+        leg_def=leg_def,
+        rules=_rule_non_overlapping_strike,
+        join_on=["underlying_symbol", "expiration", "dte_entry", "dte_range"],
+        params=kwargs,
+    )
+
+
+def _butterfly(
+    data: pd.DataFrame, leg_def: List[Tuple], **kwargs: Unpack[StrategyParamsDict]
+) -> pd.DataFrame:
+    """Process butterfly strategies (3 legs at different strikes)."""
+    kwargs.setdefault("leg1_delta", _DEFAULT_ITM_WING_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_ATM_DELTA)
+    kwargs.setdefault("leg3_delta", _DEFAULT_OTM_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=triple_strike_internal_cols,
+        leg_def=leg_def,
+        rules=_rule_butterfly_strikes,
+        join_on=["underlying_symbol", "expiration", "dte_entry", "dte_range"],
+        params=kwargs,
+    )
+
+
+def _iron_condor(
+    data: pd.DataFrame, leg_def: List[Tuple], **kwargs: Unpack[StrategyParamsDict]
+) -> pd.DataFrame:
+    """Process iron condor strategies (4 legs at different strikes)."""
+    kwargs.setdefault("leg1_delta", _DEFAULT_OTM_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_DELTA)
+    kwargs.setdefault("leg3_delta", _DEFAULT_DELTA)
+    kwargs.setdefault("leg4_delta", _DEFAULT_OTM_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=quadruple_strike_internal_cols,
+        leg_def=leg_def,
+        rules=_rule_iron_condor_strikes,
+        join_on=["underlying_symbol", "expiration", "dte_entry", "dte_range"],
+        params=kwargs,
+    )
+
+
+def _iron_butterfly(
+    data: pd.DataFrame, leg_def: List[Tuple], **kwargs: Unpack[StrategyParamsDict]
+) -> pd.DataFrame:
+    """Process iron butterfly strategies (4 legs, middle legs share strike)."""
+    kwargs.setdefault("leg1_delta", _DEFAULT_OTM_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_ATM_DELTA)
+    kwargs.setdefault("leg3_delta", _DEFAULT_ATM_DELTA)
+    kwargs.setdefault("leg4_delta", _DEFAULT_OTM_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=quadruple_strike_internal_cols,
+        leg_def=leg_def,
+        rules=_rule_iron_butterfly_strikes,
+        join_on=["underlying_symbol", "expiration", "dte_entry", "dte_range"],
+        params=kwargs,
+    )
+
+
+def _covered_call(
+    data: pd.DataFrame,
+    leg_def: List[Tuple],
+    stock_data: Optional[pd.DataFrame] = None,
+    **kwargs: Unpack[StrategyParamsDict],
+) -> pd.DataFrame:
+    """
+    Process covered call strategy.
+
+    When *stock_data* is ``None`` (default), the underlying position is
+    approximated via a deep ITM call.  When a DataFrame of stock prices
+    is provided, actual stock close prices are used for the underlying
+    leg instead.
+
+    Args:
+        data: DataFrame containing option chain data.
+        leg_def: Leg definitions – ``[(Side, filter), ...]``.
+        stock_data: Optional DataFrame of stock prices.  Accepts
+            ``yf.download()`` output directly; normalized internally
+            via ``_normalize_stock_data()``.
+        **kwargs: Strategy parameters forwarded to the processing pipeline.
+    """
+    if stock_data is not None:
+        return _covered_with_stock(data, leg_def, stock_data, **kwargs)
+
+    kwargs.setdefault("leg1_delta", _DEFAULT_DEEP_ITM_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=double_strike_internal_cols,
+        leg_def=leg_def,
+        rules=_rule_non_overlapping_strike,
+        join_on=["underlying_symbol", "expiration", "dte_entry", "dte_range"],
+        params=kwargs,
+    )
+
+
+def _normalize_stock_data(
+    stock_data: pd.DataFrame, options_data: pd.DataFrame
+) -> pd.DataFrame:
+    """Normalize stock data to the internal format expected by the pipeline.
+
+    Accepts stock data from various sources (yfinance, CSV, user-provided
+    DataFrames) and returns a DataFrame with columns:
+    ``[underlying_symbol, quote_date, close]``.
+
+    Normalization steps:
+
+    1. If the index is a ``DatetimeIndex``, reset it to a column (handles
+       yfinance output where dates are the index).
+    2. Flatten ``MultiIndex`` columns (yfinance multi-ticker downloads).
+    3. Lowercase all column names (``Close`` → ``close``).
+    4. Map ``date`` → ``quote_date`` if ``quote_date`` is missing.
+    5. If ``underlying_symbol`` is absent, infer it from *options_data*
+       (works for single-symbol datasets, raises for multi-symbol).
+    """
+    from ..timestamps import normalize_dates
+
+    df = stock_data.copy()
+
+    # Flatten MultiIndex columns (yfinance multi-ticker downloads)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] for c in df.columns]
+
+    # Reset DatetimeIndex to a column (yfinance uses date as index)
+    if isinstance(df.index, pd.DatetimeIndex):
+        df = df.reset_index()
+
+    # Lowercase all column names
+    df.columns = [c.lower() for c in df.columns]
+
+    # Map common date column names to quote_date
+    if "quote_date" not in df.columns:
+        if "date" in df.columns:
+            df = df.rename(columns={"date": "quote_date"})
+        elif "index" in df.columns:
+            df = df.rename(columns={"index": "quote_date"})
+
+    # Infer underlying_symbol from options data if missing
+    if "underlying_symbol" not in df.columns:
+        symbols = options_data["underlying_symbol"].unique()
+        if len(symbols) == 1:
+            df["underlying_symbol"] = symbols[0]
+        else:
+            raise KeyError(
+                "stock_data has no 'underlying_symbol' column and the options "
+                "data contains multiple symbols. Please add an "
+                "'underlying_symbol' column to your stock data."
+            )
+
+    # Validate required columns are present after normalization
+    required = {"underlying_symbol", "quote_date", "close"}
+    missing = required - set(df.columns)
+    if missing:
+        raise KeyError(
+            f"stock_data is missing required columns after normalization: "
+            f"{', '.join(sorted(missing))}. "
+            f"Expected columns: underlying_symbol (or inferred), "
+            f"quote_date (or date/DatetimeIndex), close."
+        )
+
+    df["quote_date"] = normalize_dates(df["quote_date"])
+    return df[["underlying_symbol", "quote_date", "close"]]
+
+
+def _match_stock_prices(
+    result: pd.DataFrame,
+    stock_data: pd.DataFrame,
+    options_data: pd.DataFrame,
+) -> pd.DataFrame:
+    """Merge stock close prices by entry and exit date onto a result DataFrame.
+
+    Normalizes *stock_data* via ``_normalize_stock_data()`` and inner-joins
+    on ``(underlying_symbol, quote_date_entry)`` and
+    ``(underlying_symbol, quote_date_exit)``, adding ``_stock_entry`` and
+    ``_stock_exit`` columns.
+    """
+    stock_prices = _normalize_stock_data(stock_data, options_data)
+
+    entry_map = stock_prices.rename(
+        columns={"quote_date": "quote_date_entry", "close": "_stock_entry"}
+    )
+    result = result.merge(
+        entry_map, on=["underlying_symbol", "quote_date_entry"], how="inner"
+    )
+
+    exit_map = stock_prices.rename(
+        columns={"quote_date": "quote_date_exit", "close": "_stock_exit"}
+    )
+    result = result.merge(
+        exit_map, on=["underlying_symbol", "quote_date_exit"], how="inner"
+    )
+    return result
+
+
+def _apply_option_slippage(
+    result: pd.DataFrame,
+    side_value: int,
+    params: dict,
+    suffix: str = "",
+    num_legs: int = 1,
+) -> pd.DataFrame:
+    """Apply slippage to entry/exit prices on a single option leg.
+
+    *suffix* distinguishes legs when multiple option legs are present
+    (e.g. ``"_opt1"``, ``"_opt2"``).  When the required bid/ask columns
+    are missing or slippage is ``"mid"``, the DataFrame is returned
+    unchanged.
+    """
+    slippage = params["slippage"]
+    bid_entry_col = f"bid_entry{suffix}"
+    ask_entry_col = f"ask_entry{suffix}"
+    if bid_entry_col not in result.columns or ask_entry_col not in result.columns:
+        return result
+    if slippage == "mid":
+        return result
+
+    result = result.copy()
+    volume_entry = (
+        result.get(f"volume_entry{suffix}")
+        if f"volume_entry{suffix}" in result.columns
+        else None
+    )
+    result[f"entry{suffix}"] = _calculate_fill_price(
+        result[bid_entry_col],
+        result[ask_entry_col],
+        side_value,
+        slippage,
+        params["fill_ratio"],
+        volume_entry,
+        params["reference_volume"],
+        params["per_leg_slippage"],
+        num_legs=num_legs,
+    )
+    volume_exit = (
+        result.get(f"volume_exit{suffix}")
+        if f"volume_exit{suffix}" in result.columns
+        else None
+    )
+    result[f"exit{suffix}"] = _calculate_fill_price(
+        result[f"bid_exit{suffix}"],
+        result[f"ask_exit{suffix}"],
+        -side_value,
+        slippage,
+        params["fill_ratio"],
+        volume_exit,
+        params["reference_volume"],
+        params["per_leg_slippage"],
+        num_legs=num_legs,
+    )
+    return result
+
+
+def _covered_with_stock(
+    data: pd.DataFrame,
+    leg_def: List[Tuple],
+    stock_data: pd.DataFrame,
+    **kwargs: Unpack[StrategyParamsDict],
+) -> pd.DataFrame:
+    """Process a covered strategy using actual stock data for the underlying.
+
+    The option leg (``leg_def[1]``) is evaluated through the normal
+    single-leg pipeline.  Stock close prices are then matched by date to
+    compute a combined entry cost, exit proceeds, and percentage change.
+    """
+    # The option is always the second leg definition
+    option_leg = leg_def[1]
+    option_side = option_leg[0]
+    option_filter = option_leg[1]
+
+    # Only one delta target is needed (for the option leg).  The option is
+    # evaluated as a single leg, so we pass its delta target via
+    # ``leg1_delta`` to the single-leg pipeline.  However, for consistency
+    # with the synthetic 2-leg covered/protective strategies, allow a
+    # user-provided ``leg2_delta`` (which normally controls the option leg)
+    # to take effect when ``leg1_delta`` is not explicitly set.
+    if "leg1_delta" not in kwargs and "leg2_delta" in kwargs:
+        kwargs["leg1_delta"] = kwargs["leg2_delta"]
+    else:
+        kwargs.setdefault("leg1_delta", _DEFAULT_DELTA)
+    params = _run_checks(dict(kwargs), data)
+
+    # --- evaluate the option leg ---
+    data = data.copy()
+    data["quote_date"] = normalize_dates(data["quote_date"])
+    data["expiration"] = normalize_dates(data["expiration"])
+    data["option_type"] = data["option_type"].str.lower()
+
+    delta_target = params["leg1_delta"]
+    leg_data = option_filter(data)
+
+    evaluated = _evaluate_all_options(
+        leg_data,
+        dte_interval=params["dte_interval"],
+        max_entry_dte=params["max_entry_dte"],
+        exit_dte=params["exit_dte"],
+        exit_dte_tolerance=params["exit_dte_tolerance"],
+        min_bid_ask=params["min_bid_ask"],
+        delta_target=delta_target["target"],
+        delta_range_min=delta_target["min"],
+        delta_range_max=delta_target["max"],
+        delta_interval=params["delta_interval"],
+        entry_dates=params["entry_dates"],
+        exit_dates=params["exit_dates"],
+    )
+
+    # Stock delta is always 1.0, so delta_range_leg1 is constant and not
+    # useful for grouping.  Only the option leg's delta range is included.
+    external_cols = ["dte_range", "delta_range_leg2"]
+
+    def _empty_result() -> pd.DataFrame:
+        """Return a correctly shaped empty DataFrame for both raw and aggregated."""
+        if params["raw"]:
+            return pd.DataFrame(columns=double_strike_internal_cols)
+        return pd.DataFrame(columns=external_cols + describe_cols)
+
+    if evaluated.empty:
+        return _empty_result()
+
+    # --- match stock prices ---
+    result = _match_stock_prices(evaluated, stock_data, data)
+
+    if result.empty:
+        return _empty_result()
+
+    # --- apply slippage to option leg ---
+    result = _apply_option_slippage(result, option_side.value, params)
+
+    # --- compute combined P&L ---
+    stock_entry = result["_stock_entry"]
+    stock_exit = result["_stock_exit"]
+    option_entry = result["entry"] * option_side.value
+    option_exit = result["exit"] * option_side.value
+
+    total_entry = stock_entry + option_entry
+    total_exit = stock_exit + option_exit
+    net_pnl = total_exit - total_entry
+
+    # Apply commission if configured.
+    # commission is already a plain dict after _run_checks() -> model_dump()
+    commission_obj = params.get("commission")
+    total_commission = 0.0
+    if commission_obj is not None:
+        # Option leg only — use leg_def[1:] (the option leg)
+        option_leg_def = [leg_def[1]]
+        comm_per_side = _calculate_commission(
+            option_leg_def, commission_obj, has_stock_leg=True, num_shares=100
+        )
+        total_commission = comm_per_side * 2
+        net_pnl = net_pnl - total_commission
+
+    output = pd.DataFrame(
+        {
+            "underlying_symbol": result["underlying_symbol"].values,
+            "underlying_price_entry_leg1": result["_stock_entry"].values,
+            "expiration": result["expiration"].values,
+            "dte_entry": result["dte_entry"].values,
+            "option_type_leg1": "stock",
+            "strike_leg1": result["_stock_entry"].values,
+            "option_type_leg2": result["option_type"].values,
+            "strike_leg2": result["strike"].values,
+            "total_entry_cost": total_entry.values,
+            "total_exit_proceeds": total_exit.values,
+            "pct_change": np.where(
+                total_entry.abs() > 0,
+                net_pnl / total_entry.abs(),
+                np.nan,
+            ),
+            "delta_entry_leg1": 1.0,
+            "delta_entry_leg2": (
+                result["delta_entry"].values
+                if "delta_entry" in result.columns
+                else np.nan
+            ),
+        }
+    )
+
+    if commission_obj is not None:
+        output["total_commission"] = total_commission
+
+    # Carry over grouping columns produced by the evaluation pipeline
+    if "dte_range" in result.columns:
+        output["dte_range"] = result["dte_range"].values
+    if "delta_range" in result.columns:
+        output["delta_range_leg2"] = result["delta_range"].values
+
+    return _format_output(output, params, double_strike_internal_cols, external_cols)
+
+
+def _collar(
+    data: pd.DataFrame,
+    leg_def: List[Tuple],
+    stock_data: Optional[pd.DataFrame] = None,
+    **kwargs: Unpack[StrategyParamsDict],
+) -> pd.DataFrame:
+    """
+    Process collar strategy.
+
+    A collar consists of long underlying + short OTM call + long OTM put.
+
+    When *stock_data* is ``None`` (default), the underlying position is
+    approximated via a deep ITM call (3-leg synthetic).  When a DataFrame
+    of stock prices is provided, actual stock close prices are used for
+    the underlying leg instead (2 option legs merged with stock).
+
+    Args:
+        data: DataFrame containing option chain data.
+        leg_def: Leg definitions – ``[(Side, filter), ...]``.
+        stock_data: Optional DataFrame of stock prices.
+        **kwargs: Strategy parameters forwarded to the processing pipeline.
+    """
+    if stock_data is not None:
+        return _collar_with_stock(data, leg_def, stock_data, **kwargs)
+
+    # Synthetic collar: deep ITM call (stock proxy) + short OTM call + long OTM put
+    kwargs.setdefault("leg1_delta", _DEFAULT_DEEP_ITM_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_DELTA)
+    kwargs.setdefault("leg3_delta", _DEFAULT_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=triple_strike_internal_cols,
+        leg_def=leg_def,
+        join_on=["underlying_symbol", "expiration", "dte_entry", "dte_range"],
+        params=kwargs,
+    )
+
+
+def _collar_with_stock(
+    data: pd.DataFrame,
+    leg_def: List[Tuple],
+    stock_data: pd.DataFrame,
+    **kwargs: Unpack[StrategyParamsDict],
+) -> pd.DataFrame:
+    """Process a collar strategy using actual stock data for the underlying.
+
+    The two option legs (short call + long put) are evaluated through the
+    normal two-leg pipeline.  Stock close prices are then matched by date
+    to compute combined entry cost, exit proceeds, and percentage change.
+    """
+    # Option legs are leg_def[1] (short call) and leg_def[2] (long put)
+    option_leg_defs = leg_def[1:]  # skip the stock/synthetic leg
+
+    # Map collar-style 3-leg deltas to the 2-leg pipeline.
+    # Public API: leg2_delta = short call, leg3_delta = long put.
+    # Internal pipeline uses leg1_delta (opt leg 1) and leg2_delta (opt leg 2).
+    opt1_delta = kwargs.pop("leg2_delta", None)
+    opt2_delta = kwargs.pop("leg3_delta", None)
+    kwargs.pop("leg1_delta", None)  # stock leg delta — not used here
+    kwargs["leg1_delta"] = opt1_delta if opt1_delta is not None else _DEFAULT_DELTA
+    kwargs["leg2_delta"] = opt2_delta if opt2_delta is not None else _DEFAULT_DELTA
+    params = _run_checks(dict(kwargs), data)
+
+    # --- evaluate the option legs via 2-leg spread pipeline ---
+    data = data.copy()
+    data["quote_date"] = normalize_dates(data["quote_date"])
+    data["expiration"] = normalize_dates(data["expiration"])
+    data["option_type"] = data["option_type"].str.lower()
+
+    # Evaluate each option leg separately
+    leg_results = []
+    for i, option_leg in enumerate(option_leg_defs):
+        option_filter = option_leg[1]
+        delta_key = f"leg{i + 1}_delta"
+        delta_target = params[delta_key]
+
+        leg_data = option_filter(data)
+        evaluated = _evaluate_all_options(
+            leg_data,
+            dte_interval=params["dte_interval"],
+            max_entry_dte=params["max_entry_dte"],
+            exit_dte=params["exit_dte"],
+            exit_dte_tolerance=params["exit_dte_tolerance"],
+            min_bid_ask=params["min_bid_ask"],
+            delta_target=delta_target["target"],
+            delta_range_min=delta_target["min"],
+            delta_range_max=delta_target["max"],
+            delta_interval=params["delta_interval"],
+            entry_dates=params["entry_dates"],
+            exit_dates=params["exit_dates"],
+        )
+        leg_results.append((option_leg, evaluated))
+
+    external_cols = ["dte_range", "delta_range_leg2", "delta_range_leg3"]
+
+    def _empty_result() -> pd.DataFrame:
+        if params["raw"]:
+            return pd.DataFrame(columns=triple_strike_internal_cols)
+        return pd.DataFrame(columns=external_cols + describe_cols)
+
+    if any(ev.empty for _, ev in leg_results):
+        return _empty_result()
+
+    # Merge the two option legs on common keys
+    leg1_eval = leg_results[0][1]
+    leg2_eval = leg_results[1][1]
+
+    merge_keys = [
+        "underlying_symbol",
+        "expiration",
+        "quote_date_entry",
+        "quote_date_exit",
+        "dte_entry",
+    ]
+    if "dte_range" in leg1_eval.columns and "dte_range" in leg2_eval.columns:
+        merge_keys.append("dte_range")
+
+    result = leg1_eval.merge(
+        leg2_eval,
+        on=merge_keys,
+        suffixes=("_opt1", "_opt2"),
+        how="inner",
+    )
+
+    if result.empty:
+        return _empty_result()
+
+    # --- match stock prices ---
+    result = _match_stock_prices(result, stock_data, data)
+
+    if result.empty:
+        return _empty_result()
+
+    # --- apply slippage to option legs ---
+    for suffix, opt_leg in [
+        ("_opt1", option_leg_defs[0]),
+        ("_opt2", option_leg_defs[1]),
+    ]:
+        result = _apply_option_slippage(
+            result, opt_leg[0].value, params, suffix, num_legs=2
+        )
+
+    # --- compute combined P&L ---
+    opt1_side = option_leg_defs[0][0]
+    opt2_side = option_leg_defs[1][0]
+
+    stock_entry = result["_stock_entry"]
+    stock_exit = result["_stock_exit"]
+    opt1_entry = result["entry_opt1"] * opt1_side.value
+    opt1_exit = result["exit_opt1"] * opt1_side.value
+    opt2_entry = result["entry_opt2"] * opt2_side.value
+    opt2_exit = result["exit_opt2"] * opt2_side.value
+
+    total_entry = stock_entry + opt1_entry + opt2_entry
+    total_exit = stock_exit + opt1_exit + opt2_exit
+    net_pnl = total_exit - total_entry
+
+    commission_obj = params.get("commission")
+    total_commission = 0.0
+    if commission_obj is not None:
+        option_leg_def = leg_def[1:]
+        comm_per_side = _calculate_commission(
+            option_leg_def, commission_obj, has_stock_leg=True, num_shares=100
+        )
+        total_commission = comm_per_side * 2
+        net_pnl = net_pnl - total_commission
+
+    output = pd.DataFrame(
+        {
+            "underlying_symbol": result["underlying_symbol"].values,
+            "underlying_price_entry_leg1": result["_stock_entry"].values,
+            "expiration": result["expiration"].values,
+            "dte_entry": result["dte_entry"].values,
+            "dte_range": result.get("dte_range", pd.Series(dtype=str)).values
+            if "dte_range" in result.columns
+            else np.nan,
+            "option_type_leg1": "stock",
+            "strike_leg1": result["_stock_entry"].values,
+            "option_type_leg2": result["option_type_opt1"].values,
+            "strike_leg2": result["strike_opt1"].values,
+            "option_type_leg3": result["option_type_opt2"].values,
+            "strike_leg3": result["strike_opt2"].values,
+            "total_entry_cost": total_entry.values,
+            "total_exit_proceeds": total_exit.values,
+            "pct_change": np.where(
+                total_entry.abs() > 0,
+                net_pnl / total_entry.abs(),
+                np.nan,
+            ),
+            "delta_entry_leg1": 1.0,
+            "delta_entry_leg2": (
+                result["delta_entry_opt1"].values
+                if "delta_entry_opt1" in result.columns
+                else np.nan
+            ),
+            "delta_entry_leg3": (
+                result["delta_entry_opt2"].values
+                if "delta_entry_opt2" in result.columns
+                else np.nan
+            ),
+        }
+    )
+
+    if commission_obj is not None:
+        output["total_commission"] = total_commission
+
+    if "dte_range" in result.columns:
+        output["dte_range"] = result["dte_range"].values
+    if "delta_range_opt1" in result.columns:
+        output["delta_range_leg2"] = result["delta_range_opt1"].values
+    if "delta_range_opt2" in result.columns:
+        output["delta_range_leg3"] = result["delta_range_opt2"].values
+
+    return _format_output(output, params, triple_strike_internal_cols, external_cols)
+
+
+def _condor(
+    data: pd.DataFrame, leg_def: List[Tuple], **kwargs: Unpack[StrategyParamsDict]
+) -> pd.DataFrame:
+    """Process condor strategies (4 legs at different strikes, same option type)."""
+    kwargs.setdefault("leg1_delta", _DEFAULT_OTM_DELTA)
+    kwargs.setdefault("leg2_delta", _DEFAULT_DELTA)
+    kwargs.setdefault("leg3_delta", _DEFAULT_DELTA)
+    kwargs.setdefault("leg4_delta", _DEFAULT_OTM_DELTA)
+    return _process_strategy(
+        data,
+        internal_cols=quadruple_strike_internal_cols,
+        leg_def=leg_def,
+        rules=_rule_iron_condor_strikes,
+        join_on=["underlying_symbol", "expiration", "dte_entry", "dte_range"],
+        params=kwargs,
+    )
+
+
+def _calendar_spread(
+    data: pd.DataFrame,
+    leg_def: List[Tuple],
+    same_strike: bool = True,
+    **kwargs: Unpack[CalendarStrategyParamsDict],
+) -> pd.DataFrame:
+    """
+    Process calendar or diagonal spread strategies.
+
+    Calendar spreads have the same strike but different expirations.
+    Diagonal spreads have different strikes and different expirations.
+
+    Args:
+        data: DataFrame containing option chain data
+        leg_def: List of tuples defining strategy legs [(side, option_filter), ...]
+        same_strike: True for calendar spreads, False for diagonal spreads
+        **kwargs: Optional strategy parameters
+
+    Returns:
+        DataFrame with calendar/diagonal spread strategy results
+    """
+    kwargs.setdefault("leg1_delta", _DEFAULT_DELTA)
+    if not same_strike:
+        kwargs.setdefault("leg2_delta", _DEFAULT_DELTA)
+
+    internal_cols = (
+        calendar_spread_internal_cols if same_strike else diagonal_spread_internal_cols
+    )
+    external_cols = (
+        calendar_spread_external_cols if same_strike else diagonal_spread_external_cols
+    )
+
+    return _process_calendar_strategy(
+        data,
+        internal_cols=internal_cols,
+        external_cols=external_cols,
+        leg_def=leg_def,
+        rules=_rule_expiration_ordering,
+        same_strike=same_strike,
+        params=kwargs,
+    )
