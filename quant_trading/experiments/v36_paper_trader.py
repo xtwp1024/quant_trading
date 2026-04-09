@@ -496,6 +496,14 @@ class V36PaperTrader:
             volume=vol,
         )
 
+    async def _fetch_klines(self, symbol: str) -> List:
+        """在线程池中获取K线(避免阻塞事件循环)"""
+        loop = asyncio.get_event_loop()
+        klines = await loop.run_in_executor(
+            None, lambda: self.rest_client.get_klines(symbol, '1m', limit=3)
+        )
+        return klines
+
     async def run(self) -> None:
         """运行Paper Trader"""
         mode = "模拟数据" if self.mock_mode else "REST轮询"
@@ -520,7 +528,7 @@ class V36PaperTrader:
                             bar = self._generate_mock_kline(symbol)
                             self.signal_gen.update_bar(bar)
                         else:
-                            klines = self.rest_client.get_klines(symbol, '1m', limit=3)
+                            klines = await self._fetch_klines(symbol)
                             for k in klines:
                                 ts = datetime.fromtimestamp(k[0] / 1000)
                                 bar = Bar(
