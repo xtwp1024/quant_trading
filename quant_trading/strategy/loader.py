@@ -37,6 +37,14 @@ BUILTIN_STRATEGIES: Dict[str, str] = {
     "hft_latency_arb": "quant_trading.strategy.advanced.hft_latency_arb_strategy.HFTLatencyArbStrategy",
     # Adaptive Multi-Regime Engine (absorbed from finclaw)
     "adaptive_regime": "quant_trading.strategy.advanced.adaptive_regime_engine.AdaptiveRegimeEngine",
+    # Jesse 7 Battle-Tested 策略 (from jesse-strategies)
+    "dave_landry": "quant_trading.strategy.advanced.jesse_strategies.DaveLandryStrategy",
+    "donchian": "quant_trading.strategy.advanced.jesse_strategies.DonchianStrategy",
+    "ifr2": "quant_trading.strategy.advanced.jesse_strategies.IFR2Strategy",
+    "mmm": "quant_trading.strategy.advanced.jesse_strategies.MMMStrategy",
+    "rsi4": "quant_trading.strategy.advanced.jesse_strategies.RSI4Strategy",
+    "simple_bollinger": "quant_trading.strategy.advanced.jesse_strategies.SimpleBollingerStrategy",
+    "monge_yokohama": "quant_trading.strategy.advanced.jesse_strategies.MongeYokohamaStrategy",
 }
 
 

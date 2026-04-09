@@ -33,6 +33,24 @@ from quant_trading.strategy.advanced.cdca_strategy import (
     CDCAStrategy,
 )
 
+# Jesse 7大策略 (from jesse-strategies, BaseStrategy适配器)
+from quant_trading.strategy.advanced.jesse_strategies import (
+    DaveLandryParams,
+    DaveLandryStrategy,
+    DonchianParams,
+    DonchianStrategy,
+    IFR2Params,
+    IFR2Strategy,
+    MMMParams,
+    MMMStrategy,
+    RSI4Params,
+    RSI4Strategy,
+    SimpleBollingerParams,
+    SimpleBollingerStrategy,
+    MongeYokohamaParams,
+    MongeYokohamaStrategy,
+)
+
 __all__ = [
     # 原有策略
     "DynamicPMMStrategy",
@@ -56,4 +74,19 @@ __all__ = [
     # cDCA 定投
     "CDCAParams",
     "CDCAStrategy",
+    # Jesse 7大策略
+    "DaveLandryParams",
+    "DaveLandryStrategy",
+    "DonchianParams",
+    "DonchianStrategy",
+    "IFR2Params",
+    "IFR2Strategy",
+    "MMMParams",
+    "MMMStrategy",
+    "RSI4Params",
+    "RSI4Strategy",
+    "SimpleBollingerParams",
+    "SimpleBollingerStrategy",
+    "MongeYokohamaParams",
+    "MongeYokohamaStrategy",
 ]
