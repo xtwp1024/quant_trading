@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Data
+data/*.csv
+data/*.db
+data/*.sqlite
+data/ashare/*.json
+data/ashare/
+data/cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
