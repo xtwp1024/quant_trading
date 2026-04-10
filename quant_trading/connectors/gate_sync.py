@@ -17,8 +17,15 @@ Usage:
 
 import asyncio
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+
+# 自动加载 .env 文件
+_env_path = Path(__file__).parent.parent.parent / '.env'
+if _env_path.exists():
+    from dotenv import load_dotenv
+    load_dotenv(_env_path)
 
 from quant_trading.core.gate_adapter import GateExchangeAdapter
 
