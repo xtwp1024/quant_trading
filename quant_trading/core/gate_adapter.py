@@ -8,6 +8,7 @@ Supports spot and futures trading
 
 
 import os
+import math
 
 
 
@@ -90,6 +91,8 @@ class GateExchangeAdapter:
 
 
         self.uid = os.getenv('GATE_UID', gate_config.get('uid', ''))
+        self._authentication_failed = False
+        self._is_authenticated = False
 
 
 
@@ -210,12 +213,16 @@ class GateExchangeAdapter:
                         logger.warning("Gate.io API auth: fetch_balance returned empty")
 
 
+                    self._is_authenticated = True
+                    self._authentication_failed = False
                     return True
 
 
                 except Exception as auth_err:
 
 
+                    self._is_authenticated = False
+                    self._authentication_failed = True
                     logger.warning(f"Gate.io authentication failed: {auth_err}. Falling back to public data mode")
 
 
@@ -246,6 +253,8 @@ class GateExchangeAdapter:
             else:
 
 
+                self._is_authenticated = False
+                self._authentication_failed = False
                 logger.info("Gate.io running in public data mode (no API key)")
 
 
@@ -264,6 +273,15 @@ class GateExchangeAdapter:
 
 
 
+
+
+    def _require_authenticated(self, operation: str):
+        """Ensure private trading operations only run with authenticated credentials"""
+
+        if not self.exchange:
+            raise RuntimeError("Exchange not initialized")
+        if not self.is_authenticated:
+            raise RuntimeError(f"Gate authentication required for {operation}")
 
 
     async def get_ticker(self, symbol: str) -> Dict[str, Any]:
@@ -392,12 +410,7 @@ class GateExchangeAdapter:
         """Get account balance"""
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
-
-
+        self._require_authenticated("fetch balance")
 
 
         try:
@@ -508,10 +521,7 @@ class GateExchangeAdapter:
         """
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
+        self._require_authenticated("create order")
 
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
@@ -525,7 +535,7 @@ class GateExchangeAdapter:
             if order_type == 'market':
 
 
-                order = await self.exchange.create_market_order(gate_symbol, side, amount)
+                order = await self.exchange.create_market_order(gate_symbol, side, amount, params or {})
 
 
             elif order_type == 'limit':
@@ -537,7 +547,7 @@ class GateExchangeAdapter:
                     raise ValueError("Limit orders require a price")
 
 
-                order = await self.exchange.create_limit_order(gate_symbol, side, amount, price)
+                order = await self.exchange.create_limit_order(gate_symbol, side, amount, price, params or {})
 
 
             else:
@@ -567,7 +577,15 @@ class GateExchangeAdapter:
 
 
 
-    async def create_trigger_order(self, symbol: str, trigger_price: float, rule: int, order_type: str) -> Dict[str, Any]:
+    async def create_trigger_order(
+        self,
+        symbol: str,
+        trigger_price: float,
+        rule: int,
+        order_type: str,
+        close_order_type: Optional[str] = None,
+        auto_size: Optional[str] = None,
+    ) -> Dict[str, Any]:
 
 
         """
@@ -586,20 +604,61 @@ class GateExchangeAdapter:
             trigger_price: Trigger price
 
 
-            rule: 1 (>=), 2 (<=)
+            rule: 1 (<= trigger), 2 (>= trigger)
 
 
-            order_type: 'close-long-position' or 'close-short-position'
+            order_type: 'stop_loss' or 'take_profit'
+
+
+            close_order_type: Gate close position order type
+
+
+            auto_size: Gate hedge-mode close target
 
 
         """
 
 
-        if not self.exchange:
+        self._require_authenticated("create trigger order")
 
 
-            raise RuntimeError("Exchange not initialized")
+        if trigger_price is None:
 
+
+            raise ValueError("trigger_price is required")
+
+
+        normalized_trigger_price = float(trigger_price)
+
+
+        if not math.isfinite(normalized_trigger_price):
+
+
+            raise ValueError("trigger_price must be finite")
+
+
+        if normalized_trigger_price <= 0:
+
+
+            raise ValueError("trigger_price must be positive")
+
+
+        if close_order_type not in ('close-long-position', 'close-short-position'):
+            raise ValueError(f"Unsupported close_order_type: {close_order_type}")
+
+        if auto_size is not None and auto_size not in ('close_long', 'close_short'):
+            raise ValueError(f"Unsupported auto_size: {auto_size}")
+
+        expected_auto_size = {
+            'close-long-position': 'close_long',
+            'close-short-position': 'close_short',
+        }[close_order_type]
+        if auto_size is None:
+            pass
+        elif auto_size != expected_auto_size:
+            raise ValueError(
+                f"auto_size {auto_size} does not match close_order_type {close_order_type}"
+            )
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
 
@@ -607,121 +666,131 @@ class GateExchangeAdapter:
 
 
         # Build Gate.io V4 API payload (fixed format)
-
-
-        # close=True means close position, size=0
-
+        initial = {
+            'contract': gate_symbol,
+            'size': 0,
+            'price': '0',
+            'tif': 'ioc',
+            'reduce_only': True,
+        }
+        if auto_size is None:
+            initial['close'] = True
+        else:
+            initial['auto_size'] = auto_size
 
         params = {
-
-
             'settle': 'usdt',
-
-
-            'contract': gate_symbol,
-
-
-            'size': 0,  # 0 = close position
-
-
-            'price': '0',
-
-
-            'close': True,  # Key: close flag
-
-
+            'order_type': close_order_type,
+            'initial': initial,
             'trigger': {
-
-
                 'strategy_type': 0,
-
-
                 'price_type': 0,
-
-
-                'price': str(trigger_price),
-
-
+                'price': str(normalized_trigger_price),
                 'rule': rule,
-
-
                 'expiration': 86400
-
-
             }
-
-
         }
 
 
+        try:
 
 
-        # Exponential backoff retry mechanism (ref: EvoMap HTTP Retry Capsule)
+            # HIGH: 禁止在日志中输出完整params，防止敏感信息泄露
+            logger.debug(f"Gate.io trigger order params prepared for symbol: {symbol}")
 
 
-        max_retries = 3
+            response = await self.exchange.private_futures_post_settle_price_orders(params)
 
 
-        base_delay = 1.0
+            logger.info(
+                f"Gate.io trigger order created: {symbol} @ {normalized_trigger_price} "
+                f"(Rule={rule}, Type={order_type}, CloseType={close_order_type}, AutoSize={auto_size})"
+            )
+
+
+            return response
+
+
+        except KeyError as e:
+            logger.error(f"Gate.io API path error (KeyError: {e})")
+            raise RuntimeError(f"Gate.io trigger order endpoint unavailable: {e}") from e
+        except Exception as e:
+
+
+            import traceback
+
+
+            logger.error(f"Trigger order creation failed without retry: {e}")
+
+
+            logger.error(traceback.format_exc())
+
+
+            raise RuntimeError(f"Gate.io trigger order creation failed: {e}") from e
 
 
 
 
-        for attempt in range(max_retries):
+    async def fetch_trigger_orders(self, symbol: str) -> List[Dict[str, Any]]:
 
 
-            try:
+        """Fetch active trigger orders for a symbol"""
 
 
-                # HIGH: 禁止在日志中输出完整params，防止敏感信息泄露
-                logger.debug(f"Gate.io trigger order params prepared for symbol: {symbol}")
+        self._require_authenticated("fetch trigger orders")
 
 
-                response = await self.exchange.private_futures_post_settle_price_orders(params)
+        gate_symbol = self._convert_symbol_to_gate(symbol)
 
 
-                logger.info(f"Gate.io trigger order created: {symbol} @ {trigger_price} (Rule={rule}, Type={order_type})")
+        try:
 
 
-                return response
+            req_params = {
+                'settle': 'usdt',
+                'status': 'active',
+                'contract': gate_symbol
+            }
 
 
-            except KeyError as e:
-                logger.error(f"Gate.io API path error (KeyError: {e}), skipping this trigger order")
-                return {}
-            except Exception as e:
+            orders = await self.exchange.private_futures_get_settle_price_orders(req_params)
+            if not isinstance(orders, list):
+                raise RuntimeError(f"Unexpected trigger orders response type: {type(orders)}")
+            return orders
 
 
-                if attempt < max_retries - 1:
+        except Exception as e:
 
 
-                    import asyncio
+            logger.error(f"Failed to fetch trigger orders for {symbol}: {e}")
+            raise RuntimeError(f"Failed to fetch trigger orders for {symbol}: {e}") from e
 
 
-                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+    async def cancel_trigger_order(self, order_id: str) -> bool:
 
 
-                    logger.warning(f"Trigger order failed (attempt {attempt+1}/{max_retries}), retrying in {delay}s: {e}")
+        """Cancel a single trigger order"""
 
 
-                    await asyncio.sleep(delay)
+        self._require_authenticated("cancel trigger order")
 
 
-                else:
+        try:
 
 
-                    import traceback
+            await self.exchange.private_futures_delete_settle_price_orders_order_id({
+                'settle': 'usdt',
+                'order_id': order_id,
+            })
+            logger.info(f"Trigger order cancelled: {order_id}")
+            return True
 
 
-                    logger.error(f"Trigger order final failure: {e}")
+        except Exception as e:
 
 
-                    logger.error(traceback.format_exc())
-
-
-                    return {}
-
-
+            logger.warning(f"Failed to cancel trigger order {order_id}: {e}")
+            return False
 
 
     async def cancel_all_trigger_orders(self, symbol: str) -> bool:
@@ -730,9 +799,7 @@ class GateExchangeAdapter:
         """Cancel all trigger orders (for given symbol)"""
 
 
-        if not self.exchange: return False
-
-
+        self._require_authenticated("cancel trigger orders")
 
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
@@ -748,17 +815,10 @@ class GateExchangeAdapter:
 
 
             req_params = {
-
-
+                'settle': 'usdt',
                 'status': 'active',
-
-
                 'contract': gate_symbol
-
-
             }
-
-
 
 
             orders = await self.exchange.private_futures_get_settle_price_orders(req_params)
@@ -775,7 +835,7 @@ class GateExchangeAdapter:
                 if oid:
 
 
-                    await self.exchange.private_futures_delete_settle_price_orders_order_id(oid)
+                    await self.cancel_trigger_order(str(oid))
 
 
 
@@ -803,12 +863,7 @@ class GateExchangeAdapter:
         """Fetch position information"""
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
-
-
+        self._require_authenticated("fetch positions")
 
 
         try:
@@ -828,10 +883,12 @@ class GateExchangeAdapter:
 
 
 
-            # Filter out zero positions
-
-
-            active_positions = [p for p in positions if float(p.get('contracts', 0)) != 0]
+            active_positions = []
+            for p in positions:
+                contracts = float(p.get('contracts') or 0)
+                raw_size = float(p.get('info', {}).get('size') or 0)
+                if raw_size != 0 or contracts != 0:
+                    active_positions.append(p)
 
 
 
@@ -930,10 +987,7 @@ class GateExchangeAdapter:
         """Set leverage multiplier"""
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
+        self._require_authenticated("set leverage")
 
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
@@ -1091,6 +1145,30 @@ class GateExchangeAdapter:
         return self.exchange is not None
 
 
+    @property
+
+
+    def is_authenticated(self) -> bool:
+
+
+        """Check if adapter has authenticated trading credentials"""
+
+
+        return self._is_authenticated
+
+
+    @property
+
+
+    def authentication_failed(self) -> bool:
+
+
+        """Check if authentication was attempted but failed"""
+
+
+        return self._authentication_failed
+
+
 
 
 
@@ -1101,10 +1179,7 @@ class GateExchangeAdapter:
         """Query a single order"""
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
+        self._require_authenticated("fetch order")
 
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
@@ -1136,10 +1211,7 @@ class GateExchangeAdapter:
         """Query current open orders"""
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
+        self._require_authenticated("fetch open orders")
 
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
@@ -1171,10 +1243,7 @@ class GateExchangeAdapter:
         """Cancel a single order"""
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
+        self._require_authenticated("cancel order")
 
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
@@ -1209,10 +1278,7 @@ class GateExchangeAdapter:
         """Cancel all open orders"""
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
+        self._require_authenticated("cancel all orders")
 
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
@@ -1248,10 +1314,7 @@ class GateExchangeAdapter:
         """Query trade history"""
 
 
-        if not self.exchange:
-
-
-            raise RuntimeError("Exchange not initialized")
+        self._require_authenticated("fetch trade history")
 
 
         gate_symbol = self._convert_symbol_to_gate(symbol)
